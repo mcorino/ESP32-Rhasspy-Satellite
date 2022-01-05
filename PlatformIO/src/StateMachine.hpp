@@ -166,8 +166,8 @@ class Idle : public StateMachine
     if (device->isHotwordDetected() && !hotwordDetected) {
       hotwordDetected = true;
       //start session by publishing a message to hermes/dialogueManager/startSession
-      std::string message = "{\"init\":{\"type\":\"action\",\"canBeEnqueued\": false},\"siteId\":\"" + std::string(config.siteid) + "\"}";
-      asyncClient.publish("hermes/dialogueManager/startSession", 0, false, message.c_str());
+      std::string message = "{\"modelId\": \"\",\"siteId\":\"" + std::string(config.siteid) + "\"}";
+      asyncClient.publish("hermes/hotword/default/detected", 0, false, message.c_str());
     }
     if (configChanged) {
       configChanged = false;
