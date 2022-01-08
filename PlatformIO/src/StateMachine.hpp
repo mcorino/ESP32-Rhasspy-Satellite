@@ -21,15 +21,9 @@ public:
   };
   virtual void react(BeginPlayAudioEvent const &) {};
   virtual void react(EndPlayAudioEvent const &) {};
-  virtual void react(StreamAudioEvent const &) {
-    xEventGroupClearBits(audioGroup, PLAY);
-    Serial.println("Send EndPlayAudioEvent in StreamAudioEvent");
-    dispatch(EndPlayAudioEvent());
-    xEventGroupSetBits(audioGroup, STREAM);
-  };
   virtual void react(IdleEvent const &) {};
-  virtual void react(ErrorEvent const &) {};
-  virtual void react(TtsEvent const &) {};  
+  //virtual void react(ErrorEvent const &) {};
+  //virtual void react(TtsEvent const &) {};  
   virtual void react(UpdateEvent const &) {};
   virtual void react(PlayBytesEvent const &) {
     xEventGroupClearBits(audioGroup, STREAM);
@@ -38,6 +32,8 @@ public:
     xEventGroupSetBits(audioGroup, PLAY);
   };
   virtual void react(ListeningEvent const &) {};
+  virtual void react(HotwordOnEvent const &) {};
+  virtual void react(HotwordOffEvent const &) {};
   virtual void react(UpdateConfigurationEvent const &) {
     current_colors = COLORS_IDLE;
     device->updateBrightness(config.brightness);
@@ -56,87 +52,6 @@ public:
   }; 
   virtual void run(void) {}; 
   void         exit(void) {};
-};
-
-class Tts : public StateMachine
-{
-  void entry(void) override {
-    publishDebug("Enter Tts");
-    current_colors = COLORS_TTS;
-    StateMachine::entry();
-  }
-
-  void react(IdleEvent const &) override { 
-    publishDebug("IdleEvent in Tts");
-    transit<Idle>();
-  }
-
-  void react(ListeningEvent const &) override { 
-    publishDebug("ListeningEvent in Tts");
-    transit<Listening>();
-  }
-
-  void react(BeginPlayAudioEvent const &) override { 
-    publishDebug("BeginPlayAudioEvent in Tts");
-    transit<TtsPlay>();
-  }
-};
-
-class TtsPlay : public StateMachine
-{
-  void entry(void) override {
-    publishDebug("Enter TtsPlay");
-  }
-
-  void react(EndPlayAudioEvent const &) override { 
-    publishDebug("EndPlayAudioEvent in TtsPlay");
-    transit<Tts>();
-  }
-};
-
-class Updating : public StateMachine
-{
-  void entry(void) override {
-    Serial.println("Enter Updating");
-    current_colors = COLORS_OTA;
-    StateMachine::entry();
-  }
-};
-
-class Listening : public StateMachine
-{
-  void entry(void) override {
-    publishDebug("Enter Listening");
-    current_colors = COLORS_HOTWORD;
-    StateMachine::entry();
-    xEventGroupSetBits(audioGroup, STREAM);
-  }
-
-  void react(IdleEvent const &) override { 
-    publishDebug("IdleEvent in Listening");
-    transit<Idle>();
-  }
-
-  void react(TtsEvent const &) override { 
-    transit<Tts>();
-  }
-
-  void react(BeginPlayAudioEvent const &) override { 
-    publishDebug("BeginPlayAudioEvent in Listening");
-    transit<ListeningPlay>();
-  }
-};
-
-class ListeningPlay : public StateMachine
-{
-  void entry(void) override {
-    publishDebug("Enter ListeningPlay");
-  }
-
-  void react(EndPlayAudioEvent const &) override { 
-    publishDebug("EndPlayAudioEvent in ListeningPlay");
-    transit<Listening>();
-  }
 };
 
 class Idle : public StateMachine
@@ -179,19 +94,29 @@ class Idle : public StateMachine
     transit<Listening>();
   }
 
+  virtual void react(HotwordOnEvent const &) {
+    if (config.hotword_detection == HW_REMOTE && (xEventGroupGetBits(audioGroup) & STREAM) == 0)
+    {
+      // start streaming audio to rhasspy for remote
+      // hotword detection
+      xEventGroupSetBits(audioGroup, STREAM);
+    }
+  }
+
+  virtual void react(HotwordOffEvent const &) {
+    if (config.hotword_detection == HW_REMOTE && (xEventGroupGetBits(audioGroup) & STREAM) == STREAM)
+    {
+      // stop streaming audio to rhasspy for remote
+      // hotword detection
+      xEventGroupClearBits(audioGroup, STREAM);
+    }
+  }
+
   void react(BeginPlayAudioEvent const &) override { 
     publishDebug("BeginPlayAudioEvent in Idle");
     transit<IdlePlay>();
   }
 
-  void react(TtsEvent const &) override { 
-    transit<Tts>();
-  }
-
-  void react(ErrorEvent const &) override { 
-    transit<Error>();
-  }
-  
   void react(UpdateEvent const &) override { 
     transit<Updating>();
   }
@@ -203,44 +128,61 @@ class IdlePlay : public StateMachine
     publishDebug("Enter IdlePlay");
   }
 
+  void react(ListeningEvent const &) override { 
+    transit<ListeningPlay>();
+  }
+
   void react(EndPlayAudioEvent const &) override { 
+    xEventGroupClearBits(audioGroup, PLAY);
     publishDebug("EndPlayAudioEvent in IdlePlay");
     transit<Idle>();
   }
 };
 
-class Error : public StateMachine
+class Listening : public StateMachine
 {
   void entry(void) override {
-    publishDebug("Enter Error");
-    current_colors = COLORS_ERROR;
+    publishDebug("Enter Listening");
+    current_colors = COLORS_HOTWORD;
     StateMachine::entry();
+    xEventGroupSetBits(audioGroup, STREAM);
   }
 
   void react(IdleEvent const &) override { 
-    publishDebug("IdleEvent in Error");
+    publishDebug("IdleEvent in Listening");
     transit<Idle>();
   }
 
   void react(BeginPlayAudioEvent const &) override { 
-    publishDebug("BeginPlayAudioEvent in Error");
-    transit<ErrorPlay>();
+    publishDebug("BeginPlayAudioEvent in Listening");
+    transit<ListeningPlay>();
   }
 };
 
-class ErrorPlay : public StateMachine
+class ListeningPlay : public StateMachine
 {
   void entry(void) override {
-    publishDebug("Enter ErrorPlay");
+    publishDebug("Enter ListeningPlay");
   }
 
+  virtual void react(IdleEvent const &) {
+    publishDebug("IdleEvent in ListeningPlay");
+    transit<IdlePlay>();
+  };
+
   void react(EndPlayAudioEvent const &) override { 
-    publishDebug("EndPlayAudioEvent in ErrorPlay");
-    transit<Error>();
+    xEventGroupClearBits(audioGroup, PLAY);
+    publishDebug("EndPlayAudioEvent in ListeningPlay");
+    transit<Listening>();
   }
-  
-  void react(UpdateEvent const &) override { 
-    transit<Updating>();
+};
+
+class Updating : public StateMachine
+{
+  void entry(void) override {
+    Serial.println("Enter Updating");
+    current_colors = COLORS_OTA;
+    StateMachine::entry();
   }
 };
 
@@ -250,14 +192,16 @@ class MQTTConnected : public StateMachine {
     Serial.printf("Connected as %s\r\n",config.siteid.c_str());
     publishDebug("Connected to asynch MQTT!");
     asyncClient.subscribe(playBytesTopic.c_str(), 0);
-    asyncClient.subscribe(hotwordTopic.c_str(), 0);
+    if (config.hotword_detection == HW_REMOTE) {
+      asyncClient.subscribe(hotwordTopic.c_str(), 0);
+    }
     asyncClient.subscribe(audioTopic.c_str(), 0);
     //asyncClient.subscribe(debugTopic.c_str(), 0);
     asyncClient.subscribe(ledTopic.c_str(), 0);
     asyncClient.subscribe(restartTopic.c_str(), 0);
-    asyncClient.subscribe(sayTopic.c_str(), 0);
-    asyncClient.subscribe(sayFinishedTopic.c_str(), 0);
-    asyncClient.subscribe(errorTopic.c_str(), 0);
+    asyncClient.subscribe(startListeningTopic.c_str(), 0);
+    asyncClient.subscribe(stopListeningTopic.c_str(), 0);
+    asyncClient.subscribe(asrToggleOffTopic.c_str(), 0);
     transit<Idle>();
   }
 };
@@ -511,6 +455,11 @@ void handle_playBytes(const std::string& topicstr, uint8_t *payload, size_t len,
   // start of message
   if (index == 0)
   {
+
+    while (xEventGroupGetBits(audioGroup) == PLAY) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
     message_size = total;
     audioData.clear();
     XT_Wav_Class Message((const uint8_t *)payload);
@@ -550,7 +499,8 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
   // complete or end of message has been received
   if (len + index == total)
   {
-    if (topicstr.find(errorTopic.c_str()) != std::string::npos)
+    Serial.printf("Complete MQTT message %s", topicstr.c_str()); Serial.println();
+    if (topicstr.find(startListeningTopic.c_str()) != std::string::npos)
     {
       std::string payloadstr(payload);
       StaticJsonDocument<300> doc;
@@ -559,11 +509,12 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
       if (!err) {
         JsonObject root = doc.as<JsonObject>();
         if (root["siteId"] == config.siteid.c_str()) {
-          Serial.println("Send ErrorEvent from errorTopic");
-          send_event(ErrorEvent());
+          Serial.println("Send ListeningEvent from startListeningTopic");
+          send_event(ListeningEvent());
         }
       }
-    } else if (topicstr.find(sayFinishedTopic.c_str()) != std::string::npos)
+    } else if (topicstr.find(stopListeningTopic.c_str()) != std::string::npos 
+                || topicstr.find(asrToggleOffTopic.c_str()) != std::string::npos)
     {
       std::string payloadstr(payload);
       StaticJsonDocument<300> doc;
@@ -572,21 +523,8 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
       if (!err) {
         JsonObject root = doc.as<JsonObject>();
         if (root["siteId"] == config.siteid.c_str()) {
-          Serial.println("Send IdleEvent from sayFinishedTopic");
+          Serial.printf("Send IdleEvent from %s", topicstr.c_str()); Serial.println();
           send_event(IdleEvent());
-        }
-      }
-    } else if (topicstr.find(sayTopic.c_str()) != std::string::npos)
-    {
-      std::string payloadstr(payload);
-      StaticJsonDocument<300> doc;
-      DeserializationError err = deserializeJson(doc, payloadstr.c_str());
-      // Check if this is for us
-      if (!err) {
-        JsonObject root = doc.as<JsonObject>();
-        if (root["siteId"] == config.siteid.c_str()) {
-          Serial.println("Send TtsEvent from sayTopic");
-          send_event(TtsEvent());
         }
       }
     } else if (topicstr.find("toggleOff") != std::string::npos)
@@ -597,19 +535,9 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
       // Check if this is for us
       if (!err) {
         JsonObject root = doc.as<JsonObject>();
-        if (root["siteId"] == config.siteid.c_str() && root.containsKey("reason")) {
-          if (root["reason"] == "dialogueSession") {
-              Serial.println("Send ListeningEvent from toggleOff (dialogueSession)");
-              send_event(ListeningEvent());
-          }
-          if (root["reason"] == "ttsSay") {
-              Serial.println("Send TtsEvent from toggleOff (ttsSay)");
-              send_event(TtsEvent());
-          }
-          if (root["reason"] == "playAudio") {
-              Serial.println("Send ListeningEvent from toggleOff (playAudio)");
-              send_event(ListeningEvent());
-          }
+        if (root["siteId"] == config.siteid.c_str()) {
+          Serial.println("Send HotwordOffEvent from toggleOff");
+          send_event(HotwordOffEvent());
         }
       }
     } else if (topicstr.find("toggleOn") != std::string::npos) {
@@ -619,19 +547,9 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
       // Check if this is for us
       if (!err) {
         JsonObject root = doc.as<JsonObject>();
-        if (root["siteId"] == config.siteid.c_str() && root.containsKey("reason")) {
-          if (root["reason"] == "dialogueSession") {
-              Serial.println("Send IdleEvent from toggleOn (dialogueSession)");
-              send_event(IdleEvent());
-          }
-          if (root["reason"] == "ttsSay") {
-              Serial.println("Send IdleEvent from toggleOn (ttsSay)");
-              send_event(IdleEvent());
-          }
-          if (root["reason"] == "playAudio") {
-              Serial.println("Send IdleEvent from toggleOn (playAudio)");
-             send_event(IdleEvent());
-          }
+        if (root["siteId"] == config.siteid.c_str()) {
+          Serial.println("Send HotwordOnEvent from toggleOn");
+          send_event(HotwordOnEvent());
         }
       }
     }
@@ -761,6 +679,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
       }
     }
   } else {
+    Serial.printf("Partial MQTT message %s : (%d + %d ) <> %d", topicstr.c_str(), len, index, total); Serial.println();
     // len + index < total ==> partial message
     if (topicstr.find("playBytes") != std::string::npos)
     {
@@ -836,9 +755,10 @@ void I2Stask(void *p) {
       audioData.clear();
 
       publishDebug("Done");
-      publishDebug("Send StreamAudioEvent");
-      send_event(StreamAudioEvent());
+      publishDebug("Send EndPlayAudioEvent");
+      send_event(EndPlayAudioEvent());
     }
+
     if (xEventGroupGetBits(audioGroup) == STREAM && !config.mute_input) {     
       xSemaphoreTake(wbSemaphore, portMAX_DELAY); 
       device->setReadMode();
